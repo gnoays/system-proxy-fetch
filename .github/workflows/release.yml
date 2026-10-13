@@ -1,0 +1,108 @@
+name: Release
+
+# A tag `vX.Y.Z` pushed to `main` publishes that version to npm through Trusted Publishing,
+# with provenance, and opens a GitHub Release whose notes are the version's section of
+# `CHANGELOG.md`. `verify` refuses a tag that is not on `main`, whose CI did not pass, whose
+# version `package.json` does not say, or that the changelog has no section for.
+#
+# One-time setup, outside this file: npm configures a Trusted Publisher only on a package
+# that exists, so the first version is published by hand. Then the package gets a Trusted
+# Publisher naming this repository, workflow `release.yml` and environment `npm`.
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: read
+
+env:
+  NPM_VERSION: 11.21.0
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read # `gh run list`
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # `merge-base` needs main's history
+      - name: The tag, package.json and the changelog name one version
+        run: |
+          set -euo pipefail
+          version=$(jq -r .version package.json)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag is $GITHUB_REF_NAME but package.json says $version"
+            exit 1
+          fi
+          if ! grep -q "^## \[$version\] - " CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## [$version] - <date>' heading"
+            exit 1
+          fi
+      - name: The tag is on main, and CI passed there
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME is not on main"
+            exit 1
+          fi
+          runs=$(gh run list --workflow ci.yml --commit "$GITHUB_SHA" --status success \
+            --json event --jq '[.[] | select(.event == "push" or .event == "workflow_dispatch")] | length')
+          if [ "$runs" -lt 1 ]; then
+            echo "::error::no successful CI run for $GITHUB_SHA"
+            exit 1
+          fi
+
+  npm:
+    name: publish (npm)
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write # npm Trusted Publishing and provenance
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # `prepack` builds `dist/` with `tsc`, so the published files come from this commit.
+      - name: npm publish
+        run: |
+          set -euo pipefail
+          # The runner's Node lives under `/usr/local`, which only root can write.
+          sudo npm install -g "npm@$NPM_VERSION"
+          npm ci --no-audit --no-fund
+          npm publish --provenance --access public
+
+  release:
+    name: GitHub Release
+    needs: npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The notes are the changelog section for this version, the heading line and the
+      # link-reference lines dropped, everything up to the next `## ` kept.
+      - name: Cut the notes out of the changelog
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            index($0, "## [" v "] - ") == 1 { inside = 1; next }
+            inside && index($0, "## ") == 1   { exit }
+            inside && /^\[[0-9.]+\]: /        { next }
+            inside                            { print }
+          ' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          test -s "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
+      - name: gh release create
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" \
+            --notes-file "$RUNNER_TEMP/notes.md"

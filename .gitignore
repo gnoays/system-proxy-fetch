@@ -1,0 +1,4 @@
+node_modules/
+# Built by `tsc` from `src/` before the tests run and before `npm pack`. `files` in
+# `package.json` names what of it the package ships, which this file does not override.
+/dist/

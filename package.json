@@ -1,0 +1,82 @@
+{
+  "name": "system-proxy-fetch",
+  "version": "0.1.0",
+  "description": "fetch (undici) and http.Agent that send each request where the operating system's proxy settings would, PAC included",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gnoays/system-proxy-fetch.git"
+  },
+  "keywords": [
+    "proxy",
+    "pac",
+    "fetch",
+    "undici",
+    "http-agent",
+    "system-proxy",
+    "corporate-proxy",
+    "no_proxy"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/undici.d.mts",
+      "default": "./dist/undici.mjs"
+    },
+    "./agent": {
+      "types": "./dist/agent.d.mts",
+      "default": "./dist/agent.mjs"
+    },
+    "./core": {
+      "types": "./dist/core.d.mts",
+      "default": "./dist/core.mjs"
+    }
+  },
+  "files": [
+    "dist/core.mjs",
+    "dist/core.d.mts",
+    "dist/undici.mjs",
+    "dist/undici.d.mts",
+    "dist/agent.mjs",
+    "dist/agent.d.mts",
+    "dist/negotiate.mjs",
+    "dist/negotiate.d.mts",
+    "dist/request.mjs",
+    "dist/request.d.mts",
+    "dist/auth.mjs",
+    "dist/auth.d.mts",
+    "dist/tunnel.mjs",
+    "dist/tunnel.d.mts",
+    "dist/pacfetch.mjs",
+    "dist/pacfetch.d.mts",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "prepack": "tsc -p .",
+    "test": "tsc -p . && node --test --test-timeout=60000 test/*.test.mjs"
+  },
+  "dependencies": {
+    "agent-base": "9.0.0",
+    "proxy-watch": "^0.2.1",
+    "socks-proxy-agent": "10.1.0",
+    "undici": "^8.11.2"
+  },
+  "peerDependencies": {
+    "kerberos": ">=2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "kerberos": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@node-ntlm/core": "0.3.2",
+    "@types/node": "^22.0.0",
+    "typescript": "~7.0.2"
+  }
+}

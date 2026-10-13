@@ -1,0 +1,94 @@
+name: CI
+
+# Builds `dist/` with `tsc` and runs the tests against the `proxy-watch` that npm serves,
+# on the three operating systems the package reads settings on. Runs on pushes to `main`
+# and on pull requests into it, skipping every job while a pull request is a draft;
+# dispatch runs it on any other branch.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    # The skip is in the job's `if` and not here, because a workflow that never starts
+    # leaves a required check pending.
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, Node ${{ matrix.node }})
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: ['22.19.0', 'lts/*']
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The package's floor is undici 8's, Node 22.19: the tests run on that release itself
+      # and on the current LTS.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+
+      # The tests run against the `dist/` that `tsc` builds from `src/`, as the package
+      # ships it, and the pack is checked to carry every file `files` names.
+      - name: Test
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          node --test --test-timeout=60000 test/*.test.mjs
+          npm pack --dry-run --json > "$RUNNER_TEMP/pack.json"
+          node -e '
+            const pkg = require("./package.json");
+            const packed = new Set(require(process.argv[1])[0].files.map((f) => f.path));
+            const missing = pkg.files.filter((f) => !packed.has(f));
+            if (missing.length) {
+              console.error(`npm pack leaves out: ${missing.join(", ")}`);
+              process.exit(1);
+            }' "$RUNNER_TEMP/pack.json"
+
+      # A Windows runner belongs to no domain, so SSPI's Negotiate falls back to NTLM there;
+      # `mechanism: 'kerberos'` must send none. `kerberos` is an optional peer, installed
+      # for this step only. npm 11 leaves an optional peer out under `--no-save` alone and
+      # answers "up to date"; `--save-dev` beside it installs it without writing either file.
+      - name: SSPI Negotiate without NTLM
+        if: runner.os == 'Windows'
+        run: |
+          npm install --no-save --save-dev --no-audit --no-fund kerberos@7.0.0
+          SYSTEM_PROXY_FETCH_SSPI=1 node --test --test-timeout=60000 test/sspi.test.mjs
+
+      # Negotiate against a throwaway MIT realm. The KDC is MIT on both; the client is the
+      # GSSAPI `kerberos` links: MIT on Linux, the system's own on macOS, which is what this
+      # step is for there. Homebrew's krb5 is keg-only, hence KRB5_PREFIX.
+      - name: Kerberos against a local KDC
+        if: runner.os != 'Windows'
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            brew install krb5
+            export KRB5_PREFIX="$(brew --prefix krb5)"
+          else
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq krb5-kdc krb5-admin-server krb5-user
+          fi
+          echo '127.0.0.1 proxy.test' | sudo tee -a /etc/hosts
+          npm install --no-save --save-dev --no-audit --no-fund kerberos@7.0.0
+          bash test/kdc/start-kdc.sh "$RUNNER_TEMP/kdc"
+          set -a
+          . "$RUNNER_TEMP/kdc/env"
+          set +a
+          node --test --test-timeout=60000 test/kerberos.e2e.mjs
